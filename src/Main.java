@@ -15,5 +15,26 @@ public class Main {
         tree.qtdNode();
         tree.height();
         tree.qtdLeaf();
+
+    System.out.println("------------------");
+        tree.remove(70);
+        tree.display();
+    System.out.println("------------------");
+
+        tree.remove(50);
+        tree.display();
+    System.out.println("------------------");
+
+        tree.remove(30);
+        tree.display();
+    System.out.println("------------------");
+            tree.qtdNode();
+
+
+        tree.remove(10);
+        tree.display();
+    System.out.println("------------------");
+
+        tree.qtdNode();
     }
 }
