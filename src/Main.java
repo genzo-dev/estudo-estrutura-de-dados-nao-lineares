@@ -13,5 +13,7 @@ public class Main {
 
         tree.display();
         tree.qtdNode();
+        tree.height();
+        tree.qtdLeaf();
     }
 }
