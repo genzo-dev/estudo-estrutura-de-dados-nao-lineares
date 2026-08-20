@@ -12,6 +12,6 @@ public class Main {
         tree.insert(90);
 
         tree.display();
-    
+        tree.qtdNode();
     }
 }
