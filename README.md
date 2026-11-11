@@ -18,6 +18,7 @@ Viajante (TSP) em dois mapas fixos:
 - No mapa de 18 vértices, executa Dijkstra a cada passo para encontrar o menor
   caminho até a cidade ainda não visitada mais próxima, montando a rota do
   caixeiro. A força bruta avaliaria `17!` ordens, o que é inviável.
+- Abre em tela cheia e adapta o layout à resolução do dispositivo.
 - Permite escolher a cidade inicial clicando em qualquer vértice do grafo.
 - Anima a execução: mostra a permutação testada, o melhor custo parcial, os
   caminhos mínimos encontrados e a ordem de visita.
@@ -57,6 +58,7 @@ No Windows (PowerShell), ative o ambiente com:
 5. Ao terminar, a melhor rota aparece em verde, com a ordem de visita nos selos
    roxos e o trajeto físico destacado por setas.
 6. Use **Reiniciar** para limpar o resultado mantendo o mapa e o início atuais.
+7. Pressione **ESC** para encerrar o programa.
 
 ## Como os algoritmos trabalham
 

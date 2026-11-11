@@ -34,7 +34,8 @@ EDGE = (68, 80, 102)
 NODE_FILL = (45, 55, 74)
 NODE_BORDER = (96, 111, 140)
 
-WIDTH, HEIGHT = 1440, 950
+BASE_WIDTH, BASE_HEIGHT = 1440, 950
+WIDTH, HEIGHT = BASE_WIDTH, BASE_HEIGHT
 HEADER_H = 86
 
 PANEL_X = 916
@@ -182,13 +183,15 @@ class Button:
         self.enabled = enabled
         self.hovered = enabled and self.rect.collidepoint(mouse_pos)
 
-    def clicked(self, event):
-        return (
+    def clicked(self, event, pos=None):
+        if not (
             self.enabled
             and event.type == pygame.MOUSEBUTTONDOWN
             and event.button == 1
-            and self.rect.collidepoint(event.pos)
-        )
+        ):
+            return False
+        point = pos if pos is not None else event.pos
+        return self.rect.collidepoint(point)
 
     def colors(self):
         if not self.enabled:
@@ -225,9 +228,10 @@ class SegmentedControl:
     def update(self, mouse_pos, enabled=True):
         self.hovered_index = self._index_at(mouse_pos) if enabled else None
 
-    def clicked(self, event):
+    def clicked(self, event, pos=None):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            index = self._index_at(event.pos)
+            point = pos if pos is not None else event.pos
+            index = self._index_at(point)
             if index is not None:
                 return self.options[index][0]
         return None
@@ -254,10 +258,22 @@ class SegmentedControl:
 
 
 class App:
-    def __init__(self):
+    def __init__(self, fullscreen=True, size=None):
         pygame.init()
         pygame.display.set_caption("Caixeiro Viajante — Força Bruta x Dijkstra")
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        if size is None:
+            if fullscreen:
+                info = pygame.display.Info()
+                size = (info.current_w or BASE_WIDTH, info.current_h or BASE_HEIGHT)
+            else:
+                size = (BASE_WIDTH, BASE_HEIGHT)
+        flags = pygame.FULLSCREEN if fullscreen else 0
+        self.display = pygame.display.set_mode(size, flags)
+        display_width, display_height = self.display.get_size()
+        virtual_height = BASE_HEIGHT
+        virtual_width = max(1, round(virtual_height * display_width / display_height))
+        self._configure_layout(virtual_width, virtual_height)
+        self.screen = pygame.Surface((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
 
         self.font_title = load_font(33, bold=True)
@@ -277,9 +293,35 @@ class App:
         self._build_controls()
         self.load_map("brute_force")
 
+    def _configure_layout(self, virtual_width, virtual_height):
+        global WIDTH, HEIGHT, HEADER_H, PANEL_X, PANEL_Y, PANEL_WIDTH
+        global PANEL_HEIGHT, PAD, CONTENT_X, CONTENT_WIDTH, GRAPH_CENTER, LEGEND_Y
+
+        WIDTH = virtual_width
+        HEIGHT = virtual_height
+        HEADER_H = 86
+        PANEL_Y = 106
+        PANEL_HEIGHT = 812
+        PANEL_WIDTH = int(max(500, min(620, WIDTH * 0.35)))
+        PANEL_X = WIDTH - PANEL_WIDTH - 24
+        PAD = 26
+        CONTENT_X = PANEL_X + PAD
+        CONTENT_WIDTH = PANEL_WIDTH - 2 * PAD
+        GRAPH_CENTER = (PANEL_X // 2, 505)
+        LEGEND_Y = HEIGHT - 44
+
+    def to_virtual(self, pos):
+        display_width, display_height = self.display.get_size()
+        return (
+            int(pos[0] * WIDTH / display_width),
+            int(pos[1] * HEIGHT / display_height),
+        )
+
     def _build_controls(self):
+        control_width = int(max(380, min(470, WIDTH * 0.27)))
+        control_x = WIDTH // 2 - control_width // 2
         self.map_control = SegmentedControl(
-            (520, 23, 430, 40),
+            (control_x, 23, control_width, 40),
             [
                 ("brute_force", MAP_CONFIG["brute_force"]["control"]),
                 ("dijkstra", MAP_CONFIG["dijkstra"]["control"]),
@@ -295,8 +337,10 @@ class App:
         self.map_name = name
         self.config = config
         self.vertices, self.graph, raw_positions = config["loader"](scaled_positions=False)
+        max_width = min(config["max_size"][0], max(220, PANEL_X - 120))
+        max_height = min(config["max_size"][1], max(220, HEIGHT - HEADER_H - 170))
         self.positions = fit_positions(
-            raw_positions, GRAPH_CENTER, *config["max_size"]
+            raw_positions, GRAPH_CENTER, max_width, max_height
         )
         self.node_radius = config["node_radius"]
         self.font_node = load_font(config["node_font"], bold=True)
@@ -493,7 +537,7 @@ class App:
         self.reset_result()
 
     def handle_events(self):
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = self.to_virtual(pygame.mouse.get_pos())
         idle = not self.running
         for button in self.buttons:
             button.update(mouse_pos, enabled=idle)
@@ -502,21 +546,31 @@ class App:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                return False
 
-            selected_map = self.map_control.clicked(event) if idle else None
+            mouse_event = event.type in (
+                pygame.MOUSEBUTTONDOWN,
+                pygame.MOUSEBUTTONUP,
+            )
+            virtual_pos = self.to_virtual(event.pos) if mouse_event else None
+
+            selected_map = (
+                self.map_control.clicked(event, virtual_pos) if idle else None
+            )
             if selected_map is not None and selected_map != self.map_name:
                 self.load_map(selected_map)
                 continue
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and idle:
-                vertex = self.node_at(event.pos)
+                vertex = self.node_at(virtual_pos)
                 if vertex is not None:
                     self.set_start(vertex)
                     continue
 
-            if self.play_button.clicked(event):
+            if self.play_button.clicked(event, virtual_pos):
                 self.start_run()
-            elif self.reset_button.clicked(event):
+            elif self.reset_button.clicked(event, virtual_pos):
                 self.reset_result()
             elif (
                 event.type == pygame.KEYDOWN
@@ -533,6 +587,8 @@ class App:
         self.draw_header()
         self.draw_panel()
         self.draw_footer()
+        scaled = pygame.transform.smoothscale(self.screen, self.display.get_size())
+        self.display.blit(scaled, (0, 0))
         pygame.display.flip()
 
     def draw_header(self):
@@ -972,7 +1028,7 @@ class App:
     def draw_footer(self):
         draw_text(
             self.screen,
-            "Clique em uma cidade para escolher o início · ESPAÇO inicia · Reiniciar limpa o resultado",
+            "Clique em uma cidade para escolher o início · ESPAÇO inicia · Reiniciar limpa o resultado · ESC sai",
             self.font_tiny,
             FAINT,
             (36, HEIGHT - 24),
