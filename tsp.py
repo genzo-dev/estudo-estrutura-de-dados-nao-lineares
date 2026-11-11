@@ -1,7 +1,116 @@
 import time
-from itertools import permutations
+from itertools import pairwise, permutations
 
 from dijkstra import dijkstra, reconstruct_path
+
+
+def all_pairs_shortest_paths_brute_force(graph):
+    vertices = list(graph)
+    distances = {
+        source: {target: float("inf") for target in vertices} for source in vertices
+    }
+    paths = {source: {} for source in vertices}
+
+    for source in vertices:
+        distances[source][source] = 0
+        paths[source][source] = [source]
+        stack = [(source, [source], 0)]
+
+        while stack:
+            current, path, cost = stack.pop()
+            known_path = paths[source].get(current)
+            better = cost < distances[source][current]
+            if (
+                cost == distances[source][current]
+                and known_path
+                and len(path) < len(known_path)
+            ):
+                better = True
+
+            if better:
+                distances[source][current] = cost
+                paths[source][current] = path
+
+            for neighbor, weight in graph[current].items():
+                if neighbor not in path:
+                    stack.append((neighbor, path + [neighbor], cost + weight))
+
+    return distances, paths
+
+
+def solve_tsp_brute_force_metric(
+    vertices, graph, start=None, progress_callback=None, progress_every=1
+):
+    if not vertices:
+        raise ValueError("É necessário informar pelo menos um vértice.")
+
+    start_time = time.perf_counter()
+    start = start or vertices[0]
+    shortest_start = time.perf_counter()
+    distances, paths = all_pairs_shortest_paths_brute_force(graph)
+    shortest_elapsed = time.perf_counter() - shortest_start
+
+    others = [vertex for vertex in vertices if vertex != start]
+    total_permutations = 1
+    for number in range(2, len(others) + 1):
+        total_permutations *= number
+
+    best_route = None
+    best_expanded = []
+    best_cost = float("inf")
+    evaluated = 0
+    feasible_count = 0
+
+    for ordering in permutations(others):
+        route = (start,) + ordering + (start,)
+        evaluated += 1
+        expanded = []
+
+        for a, b in pairwise(route):
+            segment = paths[a].get(b)
+            if not segment:
+                expanded = []
+                break
+            expanded.extend(segment[1:] if expanded else segment)
+
+        if expanded:
+            feasible_count += 1
+            cost = sum(distances[a][b] for a, b in pairwise(route))
+            if cost < best_cost:
+                best_cost = cost
+                best_route = route
+                best_expanded = expanded
+
+        if progress_callback and (
+            evaluated % max(1, progress_every) == 0 or evaluated == total_permutations
+        ):
+            progress_callback(
+                {
+                    "evaluated": evaluated,
+                    "total": total_permutations,
+                    "current_route": list(route),
+                    "current_expanded": expanded,
+                    "current_valid": bool(expanded),
+                    "current_cost": cost if expanded else None,
+                    "best_route": list(best_route) if best_route else None,
+                    "best_expanded": list(best_expanded),
+                    "best_cost": best_cost if best_route else None,
+                }
+            )
+
+    elapsed = time.perf_counter() - start_time
+    feasible = best_route is not None
+    return {
+        "route": list(best_route) if feasible else [],
+        "expanded": best_expanded if feasible else [],
+        "cost": best_cost if feasible else float("inf"),
+        "evaluated": evaluated,
+        "feasible_count": feasible_count,
+        "total": total_permutations,
+        "elapsed": elapsed,
+        "shortest_path_time": shortest_elapsed,
+        "feasible": feasible,
+    }
 
 
 def solve_tsp_brute_force(

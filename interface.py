@@ -7,7 +7,7 @@ from itertools import pairwise
 import pygame
 
 import maps
-from tsp import solve_tsp_brute_force, solve_tsp_dijkstra
+from tsp import solve_tsp_brute_force_metric, solve_tsp_dijkstra
 
 BACKGROUND = (14, 17, 24)
 HEADER = (19, 23, 33)
@@ -51,7 +51,7 @@ LEGEND_Y = HEIGHT - 44
 MAP_CONFIG = {
     "brute_force": {
         "title": "Mapa de 5 vértices",
-        "subtitle": "Resolução exclusiva por força bruta (4! = 24 permutações)",
+        "subtitle": "Força bruta nas permutações + caminhos mínimos por busca exaustiva",
         "control": "Força bruta (5)",
         "loader": maps.brute_force_map,
         "max_size": (600, 500),
@@ -60,7 +60,7 @@ MAP_CONFIG = {
         "edge_font": 15,
         "badge_radius": 14,
         "badge_font": 12,
-        "route_label": "Rota (força bruta)",
+        "route_label": "Trajeto físico (caminhos mínimos)",
     },
     "dijkstra": {
         "title": "Mapa de 18 vértices",
@@ -323,6 +323,7 @@ class App:
         self.total = 0
         self.elapsed = 0.0
         self.dijkstra_time = 0.0
+        self.shortest_path_time = 0.0
         self.current_route = []
         self.current_cost = None
         self.current_edges = set()
@@ -361,9 +362,9 @@ class App:
     def _compute_brute_force(self):
         def on_progress(state):
             self.updates.put(("brute_progress", state))
-            time.sleep(0.06)
+            time.sleep(0.1)
 
-        result = solve_tsp_brute_force(
+        result = solve_tsp_brute_force_metric(
             self.vertices,
             self.graph,
             start=self.start,
@@ -405,13 +406,15 @@ class App:
         self.evaluated = state["evaluated"]
         self.total = state["total"]
         self.progress = self.evaluated / self.total if self.total else 0.0
+        current_expanded = state.get("current_expanded") or []
         self.current_route = state["current_route"] if state["current_valid"] else []
         self.current_cost = state["current_cost"]
-        self.current_edges = route_edges(self.current_route)
+        self.current_edges = route_edges(current_expanded)
         if state["best_route"]:
             self.best_route = state["best_route"]
             self.best_cost = state["best_cost"]
-            self.best_edges = route_edges(self.best_route)
+            self.expanded_route = state.get("best_expanded") or list(self.best_route)
+            self.best_edges = route_edges(self.expanded_route)
 
         route_text = " → ".join(self.current_route)
         if state["current_valid"]:
@@ -419,6 +422,9 @@ class App:
                 f"Testando {self.evaluated}/{self.total}: {route_text} "
                 f"(custo {state['current_cost']})"
             )
+            expanded_text = " → ".join(current_expanded)
+            if expanded_text != route_text:
+                self.status += f" · trajeto {expanded_text}"
             self.status_color = YELLOW
         else:
             self.status = (
@@ -456,15 +462,16 @@ class App:
         self.best_cost = result.get("cost")
         self.current_route = []
         self.current_edges = set()
-        self.best_edges = route_edges(self.best_route)
         self.expanded_route = result.get("expanded") or list(self.best_route)
         self.path_edges = route_edges(self.expanded_route)
+        self.best_edges = set(self.path_edges)
         self.evaluated = result.get("evaluated", 0)
         self.total = result.get("total", 0)
         self.progress = 1.0
         self.dijkstra_progress = 1.0 if self.map_name == "dijkstra" else 0.0
         self.tour_progress = 1.0 if self.map_name == "dijkstra" else 0.0
         self.dijkstra_time = result.get("dijkstra_time", 0.0)
+        self.shortest_path_time = result.get("shortest_path_time", 0.0)
         self.visited_order = {}
         for index, vertex in enumerate(self.best_route):
             self.visited_order.setdefault(vertex, index + 1)
@@ -628,7 +635,11 @@ class App:
         for a, b, weight, key in self._edge_list():
             start, end = self.positions[a], self.positions[b]
             mid = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
-            highlighted = key in self.best_edges or key in self.path_edges
+            highlighted = (
+                key in self.best_edges
+                or key in self.path_edges
+                or key in self.current_edges
+            )
             label = self.font_edge.render(str(weight), True, TEXT if highlighted else YELLOW)
             if self.map_name == "dijkstra":
                 pill = label.get_rect(center=mid).inflate(6, 3)
@@ -799,10 +810,10 @@ class App:
             )
             self.draw_progress_row(
                 452,
-                "Dijkstra",
-                "não usado neste mapa",
-                0.0,
-                BLUE,
+                "Caminhos mínimos",
+                "busca exaustiva (sem Dijkstra)",
+                1.0 if self.phase in ("brute", "done") else 0.0,
+                GREEN,
             )
         else:
             self.draw_progress_row(
@@ -847,14 +858,15 @@ class App:
 
     def draw_metrics(self, y):
         edges = sum(len(neighbors) for neighbors in self.graph.values()) // 2
-        dijkstra_value = (
-            f"{self.dijkstra_time:.4f} s" if self.map_name == "dijkstra" else "—"
-        )
+        if self.map_name == "dijkstra":
+            path_label, path_value = "Tempo Dijkstra", f"{self.dijkstra_time:.4f} s"
+        else:
+            path_label, path_value = "Tempo caminhos", f"{self.shortest_path_time:.4f} s"
         cards = [
             ("Vértices", str(len(self.vertices)), BLUE),
             ("Arestas", str(edges), BLUE),
             ("Tempo total", f"{self.elapsed:.4f} s", PURPLE),
-            ("Tempo Dijkstra", dijkstra_value, PURPLE),
+            (path_label, path_value, PURPLE),
         ]
         card_w = (CONTENT_WIDTH - 14) // 2
         card_h = 48
