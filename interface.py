@@ -3,36 +3,36 @@ import queue
 import threading
 import time
 from itertools import pairwise
+from pathlib import Path
 
 import pygame
 
 import maps
 from tsp import solve_tsp_brute_force_metric, solve_tsp_dijkstra
 
-BACKGROUND = (14, 17, 24)
-HEADER = (19, 23, 33)
-PANEL = (23, 28, 39)
-CARD = (31, 37, 51)
-CARD_HOVER = (40, 48, 64)
-BORDER = (50, 59, 78)
-GRID_DOT = (29, 35, 47)
+BACKGROUND = (8, 8, 8)
+HEADER = (14, 14, 14)
+PANEL = (18, 18, 18)
+CARD = (24, 24, 24)
+BORDER = (64, 64, 64)
 
-TEXT = (232, 238, 247)
-MUTED = (138, 150, 171)
-FAINT = (94, 104, 124)
+TEXT = (247, 247, 247)
+MUTED = (176, 176, 176)
+FAINT = (120, 120, 120)
 
-BLUE = (88, 158, 255)
-BLUE_DIM = (40, 78, 138)
-GREEN = (52, 211, 153)
-GREEN_DIM = (22, 84, 64)
-YELLOW = (250, 204, 21)
-YELLOW_DIM = (105, 82, 12)
-PURPLE = (167, 139, 250)
-RED = (248, 113, 113)
-EDGE = (68, 80, 102)
+# Tonal aliases preserve each algorithm state without adding color.
+BLUE = (244, 244, 244)
+BLUE_DIM = (64, 64, 64)
+GREEN = (255, 255, 255)
+GREEN_DIM = (88, 88, 88)
+YELLOW = (208, 208, 208)
+YELLOW_DIM = (76, 76, 76)
+PURPLE = (180, 180, 180)
+RED = (255, 255, 255)
+EDGE = (108, 108, 108)
 
-NODE_FILL = (45, 55, 74)
-NODE_BORDER = (96, 111, 140)
+NODE_FILL = (32, 32, 32)
+NODE_BORDER = (184, 184, 184)
 
 BASE_WIDTH, BASE_HEIGHT = 1440, 950
 WIDTH, HEIGHT = BASE_WIDTH, BASE_HEIGHT
@@ -79,17 +79,18 @@ MAP_CONFIG = {
 }
 
 
-def load_font(size, bold=False):
-    for name in ("dejavusans", "liberationsans", "freesans", "ubuntu", "notosans"):
-        path = pygame.font.match_font(name, bold=bold)
-        if path:
-            return pygame.font.Font(path, size)
-    return pygame.font.SysFont(None, size, bold=bold)
-
-
-def mix(color_a, color_b, t):
-    t = max(0.0, min(1.0, t))
-    return tuple(int(color_a[i] + (color_b[i] - color_a[i]) * t) for i in range(3))
+def load_font(size, bold=False, weight=None):
+    weight = weight or (700 if bold else 400)
+    font_files = {
+        400: "Poppins-Regular.ttf",
+        500: "Poppins-Medium.ttf",
+        600: "Poppins-SemiBold.ttf",
+        700: "Poppins-Bold.ttf",
+    }
+    font_path = Path(__file__).resolve().parent / "assets" / "fonts" / font_files[weight]
+    if font_path.exists():
+        return pygame.font.Font(str(font_path), size)
+    return pygame.font.SysFont("sans", size, bold=weight >= 600)
 
 
 def draw_text(surface, text, font, color, pos, anchor="topleft"):
@@ -99,23 +100,39 @@ def draw_text(surface, text, font, color, pos, anchor="topleft"):
     return rect
 
 
-def draw_card(surface, rect, color=CARD, radius=14, border=True, border_color=BORDER):
+def draw_card(surface, rect, color=CARD, border=True, border_color=BORDER):
     rect = pygame.Rect(rect)
-    pygame.draw.rect(surface, color, rect, border_radius=radius)
+    pygame.draw.rect(surface, color, rect)
     if border:
-        pygame.draw.rect(surface, border_color, rect, width=1, border_radius=radius)
+        pygame.draw.rect(surface, border_color, rect, width=1)
+
+
+def draw_glass(surface, rect, fill, alpha, border, highlight=True):
+    rect = pygame.Rect(rect)
+    glass = pygame.Surface(rect.size, pygame.SRCALPHA)
+    glass.fill((*fill, alpha))
+    surface.blit(glass, rect.topleft)
+    pygame.draw.rect(surface, border, rect, width=1)
+    if highlight and rect.width > 2:
+        pygame.draw.line(
+            surface,
+            (255, 255, 255),
+            (rect.x + 1, rect.y + 1),
+            (rect.right - 2, rect.y + 1),
+            1,
+        )
 
 
 def draw_progress_bar(surface, x, y, width, height, progress, color):
     progress = max(0.0, min(1.0, progress))
     track = pygame.Rect(x, y, width, height)
-    pygame.draw.rect(surface, (37, 44, 58), track, border_radius=height // 2)
+    pygame.draw.rect(surface, (46, 46, 46), track)
     fill_width = int(width * progress)
     if fill_width >= height:
         fill = pygame.Rect(x, y, fill_width, height)
-        pygame.draw.rect(surface, color, fill, border_radius=height // 2)
+        pygame.draw.rect(surface, color, fill)
     elif fill_width > 0:
-        pygame.draw.rect(surface, color, (x, y, height, height), border_radius=height // 2)
+        pygame.draw.rect(surface, color, (x, y, height, height))
 
 
 def wrap_text(text, font, max_width):
@@ -138,11 +155,11 @@ def wrap_route(route, font, max_width):
         return []
     lines, current = [], route[0]
     for vertex in route[1:]:
-        candidate = current + " → " + vertex
+        candidate = current + " > " + vertex
         if font.size(candidate)[0] <= max_width:
             current = candidate
         else:
-            lines.append(current + " →")
+            lines.append(current + " >")
             current = vertex
     lines.append(current)
     return lines
@@ -195,20 +212,37 @@ class Button:
 
     def colors(self):
         if not self.enabled:
-            return (30, 35, 46), (42, 49, 63), FAINT
+            return (40, 40, 40), (84, 84, 84), FAINT
         if self.kind == "primary":
-            bg = mix(BLUE_DIM, BLUE, 0.55) if self.hovered else BLUE_DIM
-            return bg, BLUE, TEXT
+            return (250, 250, 250), (255, 255, 255), BACKGROUND
         if self.kind == "ghost":
-            bg = CARD_HOVER if self.hovered else (26, 31, 42)
-            return bg, BORDER, MUTED if not self.hovered else TEXT
-        bg = CARD_HOVER if self.hovered else CARD
-        return bg, BORDER, TEXT
+            return (100, 100, 100), (204, 204, 204), TEXT
+        return (76, 76, 76), (180, 180, 180), TEXT
 
     def draw(self, screen, font):
         bg, border, fg = self.colors()
-        draw_card(screen, self.rect, bg, radius=12, border=True, border_color=border)
-        draw_text(screen, self.label, font, fg, self.rect.center, anchor="center")
+        if not self.enabled:
+            alpha = 48
+        elif self.kind == "primary":
+            alpha = 225 if not self.hovered else 246
+        else:
+            alpha = 96 if not self.hovered else 142
+        draw_glass(screen, self.rect, bg, alpha, border, highlight=self.enabled)
+        if self.kind == "primary" and self.label == "Iniciar execução":
+            label_width = font.size(self.label)[0]
+            start_x = self.rect.centerx - (label_width + 22) // 2
+            pygame.draw.polygon(
+                screen,
+                fg,
+                [
+                    (start_x, self.rect.centery - 6),
+                    (start_x, self.rect.centery + 6),
+                    (start_x + 10, self.rect.centery),
+                ],
+            )
+            draw_text(screen, self.label, font, fg, (start_x + 20, self.rect.centery), "midleft")
+        else:
+            draw_text(screen, self.label, font, fg, self.rect.center, anchor="center")
 
 
 class SegmentedControl:
@@ -237,7 +271,7 @@ class SegmentedControl:
         return None
 
     def draw(self, screen, font):
-        draw_card(screen, self.rect, (26, 31, 42), radius=12, border=True)
+        draw_card(screen, self.rect, (22, 22, 22), border=True)
         seg_w = self.rect.width / len(self.options)
         for index, (value, label) in enumerate(self.options):
             seg = pygame.Rect(
@@ -247,10 +281,10 @@ class SegmentedControl:
                 self.rect.height - 6,
             )
             if value == self.active:
-                draw_card(screen, seg, BLUE_DIM, radius=9, border=True, border_color=BLUE)
-                fg = TEXT
+                draw_glass(screen, seg, (248, 248, 248), 226, TEXT)
+                fg = BACKGROUND
             elif self.hovered_index == index:
-                draw_card(screen, seg, CARD_HOVER, radius=9, border=False)
+                draw_glass(screen, seg, (150, 150, 150), 70, BORDER)
                 fg = TEXT
             else:
                 fg = MUTED
@@ -276,16 +310,16 @@ class App:
         self.screen = pygame.Surface((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
 
-        self.font_title = load_font(33, bold=True)
-        self.font_subtitle = load_font(16)
-        self.font_section = load_font(17, bold=True)
-        self.font_body = load_font(17)
-        self.font_small = load_font(15)
-        self.font_tiny = load_font(13)
-        self.font_micro = load_font(11)
-        self.font_metric_value = load_font(21, bold=True)
-        self.font_cost = load_font(31, bold=True)
-        self.font_badge = load_font(14, bold=True)
+        self.font_title = load_font(34, weight=700)
+        self.font_subtitle = load_font(15, weight=400)
+        self.font_section = load_font(16, weight=600)
+        self.font_body = load_font(16, weight=400)
+        self.font_small = load_font(14, weight=500)
+        self.font_tiny = load_font(12, weight=400)
+        self.font_micro = load_font(10, weight=400)
+        self.font_metric_value = load_font(21, weight=600)
+        self.font_cost = load_font(31, weight=700)
+        self.font_badge = load_font(13, weight=600)
 
         self.updates = queue.Queue()
         self.running = False
@@ -328,7 +362,7 @@ class App:
             ],
             active="brute_force",
         )
-        self.play_button = Button((CONTENT_X, 232, CONTENT_WIDTH, 54), "▶  Iniciar execução", "primary")
+        self.play_button = Button((CONTENT_X, 232, CONTENT_WIDTH, 54), "Iniciar execução", "primary")
         self.reset_button = Button((CONTENT_X, 298, CONTENT_WIDTH, 44), "Reiniciar", "ghost")
         self.buttons = [self.play_button, self.reset_button]
 
@@ -460,13 +494,13 @@ class App:
             self.expanded_route = state.get("best_expanded") or list(self.best_route)
             self.best_edges = route_edges(self.expanded_route)
 
-        route_text = " → ".join(self.current_route)
+        route_text = " > ".join(self.current_route)
         if state["current_valid"]:
             self.status = (
                 f"Testando {self.evaluated}/{self.total}: {route_text} "
                 f"(custo {state['current_cost']})"
             )
-            expanded_text = " → ".join(current_expanded)
+            expanded_text = " > ".join(current_expanded)
             if expanded_text != route_text:
                 self.status += f" · trajeto {expanded_text}"
             self.status_color = YELLOW
@@ -492,7 +526,7 @@ class App:
         for index, vertex in enumerate(state["tour"]):
             self.visited_order.setdefault(vertex, index + 1)
         self.status = (
-            f"Dijkstra de {state['origin']} → {state['target']}: "
+            f"Dijkstra de {state['origin']} > {state['target']}: "
             f"caminho mínimo encontrado (parcial {state['cost']})"
         )
         self.status_color = BLUE
@@ -635,24 +669,23 @@ class App:
         for width, number, label, st in chips:
             rect = pygame.Rect(x, center_y - 17, width, 34)
             if st == 1:
-                bg, border, fg = BLUE_DIM, BLUE, TEXT
+                bg, border, fg = (68, 68, 68), (232, 232, 232), TEXT
             elif st == 2:
-                bg, border, fg = GREEN_DIM, GREEN, TEXT
+                bg, border, fg = (242, 242, 242), (255, 255, 255), BACKGROUND
             else:
-                bg, border, fg = (26, 31, 42), BORDER, MUTED
-            draw_card(self.screen, rect, bg, radius=17, border=True, border_color=border)
+                bg, border, fg = (24, 24, 24), BORDER, MUTED
+            draw_glass(self.screen, rect, bg, 168 if st else 74, border)
 
-            circle_color = GREEN if st == 2 else (BLUE if st == 1 else (52, 61, 78))
-            pygame.draw.circle(self.screen, circle_color, (x + 20, center_y), 11)
-            draw_text(self.screen, number, self.font_badge, TEXT, (x + 20, center_y), "center")
+            marker_color = (10, 10, 10) if st == 2 else (218, 218, 218) if st == 1 else (84, 84, 84)
+            pygame.draw.rect(self.screen, marker_color, (x + 9, center_y - 10, 20, 20))
+            marker_text = BACKGROUND if st == 1 else TEXT
+            draw_text(self.screen, number, self.font_badge, marker_text, (x + 19, center_y), "center")
             draw_text(self.screen, label, self.font_small, fg, (x + 38, center_y), "midleft")
             x += width + 12
 
     def draw_graph_area(self):
         area = pygame.Rect(0, HEADER_H, PANEL_X, HEIGHT - HEADER_H)
-        for gx in range(area.left + 30, area.right, 42):
-            for gy in range(area.top + 30, area.bottom, 42):
-                pygame.draw.circle(self.screen, GRID_DOT, (gx, gy), 1)
+        pygame.draw.line(self.screen, BORDER, (PANEL_X - 1, area.top), (PANEL_X - 1, area.bottom), 1)
 
         draw_text(self.screen, self.config["title"], self.font_section, TEXT, (36, 104))
         draw_text(self.screen, self.config["subtitle"], self.font_tiny, MUTED, (38, 132))
@@ -704,10 +737,9 @@ class App:
             draw_card(
                 self.screen,
                 pill,
-                (25, 30, 41),
-                radius=5 if self.map_name == "dijkstra" else 7,
+                (20, 20, 20),
                 border=True,
-                border_color=GREEN if highlighted else BORDER,
+                border_color=(230, 230, 230) if highlighted else BORDER,
             )
             self.screen.blit(label, label.get_rect(center=mid))
 
@@ -746,7 +778,7 @@ class App:
             in_route = vertex in route_nodes
 
             if in_route:
-                fill, border, fg = GREEN, (186, 255, 222), (9, 30, 22)
+                fill, border, fg = (246, 246, 246), (255, 255, 255), (8, 8, 8)
             else:
                 fill, border, fg = NODE_FILL, NODE_BORDER, TEXT
 
@@ -756,7 +788,7 @@ class App:
             elif vertex == self.start:
                 pygame.draw.circle(self.screen, YELLOW, (x, y), self.node_radius + 7, 3)
 
-            pygame.draw.circle(self.screen, (9, 11, 16), (x + 2, y + 4), self.node_radius + 2)
+            pygame.draw.circle(self.screen, (0, 0, 0), (x + 2, y + 4), self.node_radius + 2)
             pygame.draw.circle(self.screen, fill, (x, y), self.node_radius)
             pygame.draw.circle(self.screen, border, (x, y), self.node_radius, 3)
             draw_text(self.screen, vertex, self.font_node, fg, (x, y + 1), "center")
@@ -765,17 +797,18 @@ class App:
                 self.draw_order_badge(x, y, self.visited_order[vertex])
 
     def draw_order_badge(self, x, y, number):
-        radius = self.badge_radius
+        width = self.badge_radius * 2 + 2
+        height = self.badge_radius * 2
         bx = x + int(self.node_radius * 0.82)
         by = y - int(self.node_radius * 0.82)
-        pygame.draw.circle(self.screen, (9, 11, 16), (bx, by), radius + 2)
-        pygame.draw.circle(self.screen, PURPLE, (bx, by), radius)
+        badge = pygame.Rect(bx - width // 2, by - height // 2, width, height)
+        draw_card(self.screen, badge, (224, 224, 224), border=True, border_color=TEXT)
         draw_text(
             self.screen,
             str(number),
             self.font_order,
-            (22, 16, 40),
-            (bx, by + 1),
+            BACKGROUND,
+            badge.center,
             "center",
         )
 
@@ -797,14 +830,14 @@ class App:
             if kind == "ring":
                 pygame.draw.circle(self.screen, color, (x + 9, LEGEND_Y), 8, 2)
             elif kind == "badge":
-                pygame.draw.circle(self.screen, (9, 11, 16), (x + 9, LEGEND_Y), 11)
-                pygame.draw.circle(self.screen, color, (x + 9, LEGEND_Y), 9)
+                badge = pygame.Rect(x, LEGEND_Y - 9, 18, 18)
+                pygame.draw.rect(self.screen, color, badge)
                 draw_text(
                     self.screen,
                     "1",
                     self.font_tiny,
-                    (22, 16, 40),
-                    (x + 9, LEGEND_Y + 1),
+                    BACKGROUND,
+                    badge.center,
                     "center",
                 )
             else:
@@ -813,11 +846,11 @@ class App:
             x += width + 22
 
     def draw_panel(self):
-        draw_card(self.screen, (PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT), PANEL, radius=18)
+        draw_card(self.screen, (PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT), PANEL)
 
         self.draw_section_title("CONTROLES", 124)
         self.draw_start_card(148)
-        self.play_button.label = "Executando..." if self.running else "▶  Iniciar execução"
+        self.play_button.label = "Executando..." if self.running else "Iniciar execução"
         self.play_button.draw(self.screen, self.font_section)
         self.reset_button.draw(self.screen, self.font_small)
 
@@ -836,7 +869,7 @@ class App:
 
     def draw_start_card(self, y):
         rect = pygame.Rect(CONTENT_X, y, CONTENT_WIDTH, 66)
-        draw_card(self.screen, rect, CARD, radius=12)
+        draw_card(self.screen, rect, CARD)
         draw_text(self.screen, "CIDADE INICIAL", self.font_tiny, MUTED, (rect.x + 16, rect.y + 10))
         draw_text(self.screen, self.start, self.font_metric_value, TEXT, (rect.x + 16, rect.y + 30))
         draw_text(
@@ -849,7 +882,7 @@ class App:
         )
 
     def draw_section_title(self, label, y):
-        pygame.draw.rect(self.screen, BLUE, (CONTENT_X, y + 3, 4, 16), border_radius=2)
+        pygame.draw.rect(self.screen, TEXT, (CONTENT_X, y + 3, 3, 16))
         draw_text(self.screen, label, self.font_section, TEXT, (CONTENT_X + 14, y), "midleft")
 
     def draw_divider(self, y):
@@ -900,7 +933,7 @@ class App:
         draw_progress_bar(self.screen, CONTENT_X, y + 20, CONTENT_WIDTH, 14, progress, color)
 
     def draw_status(self, y):
-        draw_text(self.screen, "●", self.font_small, self.status_color, (CONTENT_X, y), "midleft")
+        pygame.draw.circle(self.screen, self.status_color, (CONTENT_X + 5, y), 4)
         lines = wrap_text(self.status, self.font_small, CONTENT_WIDTH - 22)
         for index, line in enumerate(lines[:2]):
             draw_text(
@@ -934,12 +967,11 @@ class App:
                 card_w,
                 card_h,
             )
-            draw_card(self.screen, rect, CARD, radius=12)
+            draw_card(self.screen, rect, CARD)
             pygame.draw.rect(
                 self.screen,
                 accent,
                 (rect.x, rect.y + 12, 3, card_h - 24),
-                border_radius=2,
             )
             draw_text(self.screen, label, self.font_tiny, MUTED, (rect.x + 14, rect.y + 7))
             draw_text(self.screen, value, self.font_metric_value, TEXT, (rect.x + 14, rect.y + 24))
